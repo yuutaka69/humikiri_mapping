@@ -47,29 +47,77 @@ df = load_data(DATA_PATH)
 with st.sidebar:
     st.header('検索条件')
     if not df.empty:
-        # 踏切名でのテキスト検索
+        # --- 既存のフィルター ---
         search_name = st.text_input('踏切名で検索 (部分一致)')
         
-        # '線名'列が存在する場合のみフィルターを表示
         if '線名' in df.columns:
             unique_lines = ['すべて'] + sorted(df['線名'].dropna().astype(str).unique().tolist())
-            selected_line = st.selectbox('路線で絞り込み', unique_lines)
+            selected_line = st.selectbox('路線名で絞り込み', unique_lines)
         else:
             selected_line = 'すべて'
+
+        # --- 【追加】新しいフィルター ---
+        if '支社名' in df.columns:
+            unique_shisha = ['すべて'] + sorted(df['支社名'].dropna().astype(str).unique().tolist())
+            selected_shisha = st.selectbox('支社名で絞り込み', unique_shisha)
+        else:
+            selected_shisha = 'すべて'
+            
+        if '箇所名（系統名なし）' in df.columns:
+            unique_kasho = ['すべて'] + sorted(df['箇所名（系統名なし）'].dropna().astype(str).unique().tolist())
+            selected_kasho = st.selectbox('箇所名で絞り込み', unique_kasho)
+        else:
+            selected_kasho = 'すべて'
+            
+        if '踏切種別' in df.columns:
+            unique_type = ['すべて'] + sorted(df['踏切種別'].dropna().astype(str).unique().tolist())
+            selected_type = st.selectbox('踏切種別で絞り込み', unique_type)
+        else:
+            selected_type = 'すべて'
+            
+        if '中心位置キロ程' in df.columns:
+            # NaNを除外して最小値と最大値を取得
+            min_kilo = df['中心位置キロ程'].dropna().min()
+            max_kilo = df['中心位置キロ程'].dropna().max()
+            
+            if min_kilo < max_kilo:
+                selected_kilo_range = st.slider(
+                    '中心位置キロ程で絞り込み',
+                    min_value=float(min_kilo),
+                    max_value=float(max_kilo),
+                    value=(float(min_kilo), float(max_kilo))
+                )
+            else:
+                selected_kilo_range = None # スライダーが作成できない場合はNoneに
+        else:
+            selected_kilo_range = None
+
     else:
         st.warning("データを読み込めませんでした。")
-        search_name, selected_line = "", "すべて"
+        search_name, selected_line, selected_shisha, selected_kasho, selected_type = "", "すべて", "すべて", "すべて", "すべて"
+        selected_kilo_range = None
 
 # --- データの絞り込み処理 ---
 if not df.empty:
     filtered_df = df.copy()
-    # '踏切名'列が存在する場合のみ、絞り込み処理を実行
+    # 既存のフィルター
     if search_name and '踏切名' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['踏切名'].notna() & filtered_df['踏切名'].str.contains(search_name, na=False)]
-    
-    # '線名'列で絞り込み
     if selected_line != 'すべて' and '線名' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['線名'] == selected_line]
+        
+    # 【追加】新しいフィルターでの絞り込み
+    if selected_shisha != 'すべて' and '支社名' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['支社名'] == selected_shisha]
+    if selected_kasho != 'すべて' and '箇所名（系統名なし）' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['箇所名（系統名なし）'] == selected_kasho]
+    if selected_type != 'すべて' and '踏切種別' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['踏切種別'] == selected_type]
+    if selected_kilo_range and '中心位置キロ程' in filtered_df.columns:
+        filtered_df = filtered_df[
+            (filtered_df['中心位置キロ程'] >= selected_kilo_range[0]) &
+            (filtered_df['中心位置キロ程'] <= selected_kilo_range[1])
+        ]
 
 # --- メイン画面 (地図とデータ表示) ---
 if not df.empty and not filtered_df.empty:
@@ -79,26 +127,16 @@ if not df.empty and not filtered_df.empty:
 
     for idx, row in filtered_df.iterrows():
         if pd.notna(row['Lat']) and pd.notna(row['Lon']):
-            
-            # Googleマップへのリンクを作成
             gmap_link = f"https://www.google.com/maps?q={row['Lat']},{row['Lon']}"
-            
-            # キロ程をフォーマット
             formatted_kilopost = format_kilopost(row.get('中心位置キロ程'))
-            
-            # ポップアップに表示するHTMLコンテンツを作成
             popup_html = f"""
                 <b>踏切名:</b> {row.get('踏切名', '名称不明')}<br>
                 <b>線名:</b> {row.get('線名', '')}<br>
                 <b>キロ程:</b> {formatted_kilopost}<br>
                 <a href="{gmap_link}" target="_blank" rel="noopener noreferrer">Google Mapで開く</a>
             """
-            
             tooltip_text = row.get('踏切名', '')
-            
-            # HTMLを正しく表示するためにfolium.Popupを使用
             popup = folium.Popup(popup_html, max_width=300)
-            
             folium.Marker(
                 [row['Lat'], row['Lon']],
                 popup=popup,
@@ -107,30 +145,25 @@ if not df.empty and not filtered_df.empty:
     
     st_folium(m, width='100%', height=500)
 
-    # --- 【変更点】ダウンロード機能の追加 ---
-    # foliumマップオブジェクトをHTML文字列に変換
-    map_html = m._repr_html_()
-    
-    st.download_button(
-        label="📥 地図をHTMLファイルとしてダウンロード",
-        data=map_html,
-        file_name="fumikiri_map.html",
-        mime="text/html",
-    )
-    # --- 変更点ここまで ---
+    with st.expander("📥 地図をHTMLファイルとしてダウンロードする"):
+        map_html = m._repr_html_()
+        st.download_button(
+            label="ダウンロード",
+            data=map_html,
+            file_name="fumikiri_map.html",
+            mime="text/html",
+        )
     
     st.write(f"表示件数: {len(filtered_df)}件")
 
     # --- 表示用データフレームの準備 ---
-    ideal_display_cols = ['線名', '踏切名', '中心位置キロ程']
+    ideal_display_cols = ['支社名', '箇所名（系統名なし）', '線名', '踏切名', '踏切種別', '中心位置キロ程']
     display_cols = [col for col in ideal_display_cols if col in filtered_df.columns]
     
     if display_cols:
         display_df = filtered_df[display_cols].copy()
-        
         if '中心位置キロ程' in display_df.columns:
             display_df['中心位置キロ程'] = display_df['中心位置キロ程'].apply(format_kilopost)
-        
         st.dataframe(display_df)
 
 elif not df.empty:
