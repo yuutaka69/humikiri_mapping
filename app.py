@@ -4,6 +4,8 @@ import pandas as pd
 import folium
 from streamlit_folium import st_folium
 import os
+# 【変更点】マーカークラスタリング用のプラグインをインポート
+from folium.plugins import MarkerCluster
 
 # --- アプリの基本設定 ---
 st.set_page_config(layout="wide")
@@ -125,6 +127,9 @@ if not df.empty and not filtered_df.empty:
     center_lon = filtered_df['Lon'].mean()
     m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
 
+    # 【変更点】マーカークラスターを作成し、地図に追加
+    marker_cluster = MarkerCluster().add_to(m)
+
     for idx, row in filtered_df.iterrows():
         if pd.notna(row['Lat']) and pd.notna(row['Lon']):
             gmap_link = f"https://www.google.com/maps?q={row['Lat']},{row['Lon']}"
@@ -137,11 +142,13 @@ if not df.empty and not filtered_df.empty:
             """
             tooltip_text = row.get('踏切名', '')
             popup = folium.Popup(popup_html, max_width=300)
+            
+            # 【変更点】マーカーを直接地図に追加する代わりに、マーカークラスターに追加
             folium.Marker(
-                [row['Lat'], row['Lon']],
+                location=[row['Lat'], row['Lon']],
                 popup=popup,
                 tooltip=tooltip_text
-            ).add_to(m)
+            ).add_to(marker_cluster) # .add_to(m) から変更
     
     st_folium(m, width='100%', height=500)
 
