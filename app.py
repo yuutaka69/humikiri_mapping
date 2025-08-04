@@ -51,8 +51,12 @@ with st.sidebar:
         search_name = st.text_input('踏切名で検索 (部分一致)')
         
         # 路線名での選択フィルター
-        unique_lines = ['すべて'] + sorted(df['線名コード'].dropna().astype(str).unique().tolist())
-        selected_line = st.selectbox('路線で絞り込み', unique_lines)
+        # '線名コード'列が存在する場合のみフィルターを表示
+        if '線名コード' in df.columns:
+            unique_lines = ['すべて'] + sorted(df['線名コード'].dropna().astype(str).unique().tolist())
+            selected_line = st.selectbox('路線で絞り込み', unique_lines)
+        else:
+            selected_line = 'すべて'
     else:
         st.warning("データを読み込めませんでした。")
         search_name, selected_line = "", "すべて"
@@ -60,9 +64,11 @@ with st.sidebar:
 # --- データの絞り込み処理 ---
 if not df.empty:
     filtered_df = df.copy()
-    if search_name:
-        filtered_df = filtered_df[filtered_df['踏切名称'].notna() & filtered_df['踏切名称'].str.contains(search_name, na=False)]
-    if selected_line != 'すべて':
+    # 【修正点】'踏切名'列が存在する場合のみ、絞り込み処理を実行
+    if search_name and '踏切名' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['踏切名'].notna() & filtered_df['踏切名'].str.contains(search_name, na=False)]
+    
+    if selected_line != 'すべて' and '線名コード' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['線名コード'] == selected_line]
 
 # --- メイン画面 (地図とデータ表示) ---
@@ -73,10 +79,14 @@ if not df.empty and not filtered_df.empty:
 
     for idx, row in filtered_df.iterrows():
         if pd.notna(row['Lat']) and pd.notna(row['Lon']):
+            # 【修正点】 .get() を使って安全に列データにアクセスする
+            popup_text = f"{row.get('踏切名', '名称不明')} ({row.get('線名コード', '')})"
+            tooltip_text = row.get('踏切名', '')
+            
             folium.Marker(
                 [row['Lat'], row['Lon']],
-                popup=f"{row['踏切名称']} ({row['線名コード']})",
-                tooltip=row['踏切名称']
+                popup=popup_text,
+                tooltip=tooltip_text
             ).add_to(m)
     
     st_folium(m, width='100%', height=500)
@@ -84,15 +94,19 @@ if not df.empty and not filtered_df.empty:
     st.write(f"表示件数: {len(filtered_df)}件")
 
     # --- 表示用データフレームの準備 ---
-    # 表示する列を絞り込む
-    display_cols = ['線名コード', '踏切名称', '中心位置キロ程']
-    display_df = filtered_df[display_cols].copy()
+    # 【修正点】 表示したい列のうち、実際にデータフレームに存在する列だけを抽出
+    ideal_display_cols = ['線名コード', '踏切名', '中心位置キロ程']
+    display_cols = [col for col in ideal_display_cols if col in filtered_df.columns]
     
-    # 【変更点】キロ程の表示をカスタム形式に変換
-    display_df['中心位置キロ程'] = display_df['中心位置キロ程'].apply(format_kilopost)
-    
-    # データフレームを表示
-    st.dataframe(display_df)
+    if display_cols:
+        display_df = filtered_df[display_cols].copy()
+        
+        # '中心位置キロ程'列が存在すればフォーマットを適用
+        if '中心位置キロ程' in display_df.columns:
+            display_df['中心位置キロ程'] = display_df['中心位置キロ程'].apply(format_kilopost)
+        
+        # データフレームを表示
+        st.dataframe(display_df)
 
 elif not df.empty:
     st.warning('指定された条件に一致する踏切はありませんでした。')
