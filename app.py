@@ -97,12 +97,3 @@ if not df.empty and not filtered_df.empty:
 elif not df.empty:
     st.warning('指定された条件に一致する踏切はありませんでした。')
 ```
-
-### 主な変更点
-
-1.  **`format_kilopost`関数を追加**: コードの冒頭に、中心位置キロ程の数値を指定の文字列形式（例: `12k345.6m`）に変換するための関数を定義しました。
-2.  **表示用データフレームを準備**: 絞り込み後のデータ(`filtered_df`)から、表示に必要な列だけを抜き出した`display_df`を作成しました。
-3.  **フォーマットを適用**: `display_df`の「中心位置キロ程」列に`format_kilopost`関数を適用し、セルの値を新しい表示形式に書き換えています。
-4.  **`st.dataframe`の修正**: 最終的に表示するデータフレームを、加工済みの`display_df`に変更しました。
-
-この`app.py`ファイルをGitHubにプッシュすれば、Streamlitアプリに自動で変更が反映され
