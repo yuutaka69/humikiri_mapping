@@ -96,4 +96,3 @@ if not df.empty and not filtered_df.empty:
 
 elif not df.empty:
     st.warning('指定された条件に一致する踏切はありませんでした。')
-```
