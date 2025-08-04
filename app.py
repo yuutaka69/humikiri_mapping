@@ -83,7 +83,7 @@ if not df.empty and not filtered_df.empty:
             # Googleマップへのリンクを作成
             gmap_link = f"https://www.google.com/maps?q={row['Lat']},{row['Lon']}"
             
-            # 【変更点】キロ程をフォーマットしてポップアップに追加
+            # キロ程をフォーマット
             formatted_kilopost = format_kilopost(row.get('中心位置キロ程'))
             
             # ポップアップに表示するHTMLコンテンツを作成
@@ -106,6 +106,18 @@ if not df.empty and not filtered_df.empty:
             ).add_to(m)
     
     st_folium(m, width='100%', height=500)
+
+    # --- 【変更点】ダウンロード機能の追加 ---
+    # foliumマップオブジェクトをHTML文字列に変換
+    map_html = m._repr_html_()
+    
+    st.download_button(
+        label="📥 地図をHTMLファイルとしてダウンロード",
+        data=map_html,
+        file_name="fumikiri_map.html",
+        mime="text/html",
+    )
+    # --- 変更点ここまで ---
     
     st.write(f"表示件数: {len(filtered_df)}件")
 
