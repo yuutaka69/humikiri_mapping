@@ -9,6 +9,24 @@ import os
 st.set_page_config(layout="wide")
 st.title('踏切検索マップ 🗺️')
 
+# --- 中心位置キロ程をカスタム形式に変換する関数 ---
+def format_kilopost(value):
+    """数値を 'XXkXXX.Xm' 形式の文字列に変換する"""
+    if pd.isna(value):
+        return ""  # 空白の場合は何も返さない
+    try:
+        # 念のため数値をfloat型に変換
+        value = float(value)
+        # キロメートル部分（整数）を取得
+        kilo = int(value / 1000)
+        # メートル部分（小数点以下含む）を取得
+        meter = value % 1000
+        # f-stringを使ってフォーマット。メートル部分は5桁でゼロ埋めし、小数点1桁まで表示
+        return f"{kilo}k{meter:05.1f}m"
+    except (ValueError, TypeError):
+        return value  # 変換できない場合は元の値をそのまま返す
+
+
 # --- データ読み込み ---
 # @st.cache_data を使うと、データをキャッシュして2回目以降の読み込みを高速化します
 @st.cache_data
@@ -22,7 +40,7 @@ def load_data(file_path):
         return pd.DataFrame()
 
 # dataフォルダ内のCSVファイルを指定
-DATA_PATH = 'data/踏切_全社_緯度経度追加_v2.csv' 
+DATA_PATH = 'data/踏切_緯度経度追加_v5.csv'
 df = load_data(DATA_PATH)
 
 # --- サイドバー (検索・フィルター機能) ---
@@ -64,7 +82,27 @@ if not df.empty and not filtered_df.empty:
     st_folium(m, width='100%', height=500)
     
     st.write(f"表示件数: {len(filtered_df)}件")
-    display_cols = ['線名コード', '踏切名称', '中心位置キロ程', '誤差(m)', 'マッチング線別コード']
-    st.dataframe(filtered_df[[col for col in display_cols if col in filtered_df.columns]])
+
+    # --- 表示用データフレームの準備 ---
+    # 表示する列を絞り込む
+    display_cols = ['線名コード', '踏切名称', '中心位置キロ程']
+    display_df = filtered_df[display_cols].copy()
+    
+    # 【変更点】キロ程の表示をカスタム形式に変換
+    display_df['中心位置キロ程'] = display_df['中心位置キロ程'].apply(format_kilopost)
+    
+    # データフレームを表示
+    st.dataframe(display_df)
+
 elif not df.empty:
     st.warning('指定された条件に一致する踏切はありませんでした。')
+```
+
+### 主な変更点
+
+1.  **`format_kilopost`関数を追加**: コードの冒頭に、中心位置キロ程の数値を指定の文字列形式（例: `12k345.6m`）に変換するための関数を定義しました。
+2.  **表示用データフレームを準備**: 絞り込み後のデータ(`filtered_df`)から、表示に必要な列だけを抜き出した`display_df`を作成しました。
+3.  **フォーマットを適用**: `display_df`の「中心位置キロ程」列に`format_kilopost`関数を適用し、セルの値を新しい表示形式に書き換えています。
+4.  **`st.dataframe`の修正**: 最終的に表示するデータフレームを、加工済みの`display_df`に変更しました。
+
+この`app.py`ファイルをGitHubにプッシュすれば、Streamlitアプリに自動で変更が反映され
