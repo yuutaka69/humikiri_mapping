@@ -50,7 +50,7 @@ with st.sidebar:
         # 踏切名でのテキスト検索
         search_name = st.text_input('踏切名で検索 (部分一致)')
         
-        # 【修正点】'線名'列が存在する場合のみフィルターを表示
+        # '線名'列が存在する場合のみフィルターを表示
         if '線名' in df.columns:
             unique_lines = ['すべて'] + sorted(df['線名'].dropna().astype(str).unique().tolist())
             selected_line = st.selectbox('路線で絞り込み', unique_lines)
@@ -67,7 +67,7 @@ if not df.empty:
     if search_name and '踏切名' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['踏切名'].notna() & filtered_df['踏切名'].str.contains(search_name, na=False)]
     
-    # 【修正点】'線名'列で絞り込み
+    # '線名'列で絞り込み
     if selected_line != 'すべて' and '線名' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['線名'] == selected_line]
 
@@ -79,13 +79,29 @@ if not df.empty and not filtered_df.empty:
 
     for idx, row in filtered_df.iterrows():
         if pd.notna(row['Lat']) and pd.notna(row['Lon']):
-            # 【修正点】 .get() を使って安全に列データにアクセスする
-            popup_text = f"{row.get('踏切名', '名称不明')} ({row.get('線名', '')})"
+            
+            # Googleマップへのリンクを作成
+            gmap_link = f"https://www.google.com/maps?q={row['Lat']},{row['Lon']}"
+            
+            # 【変更点】キロ程をフォーマットしてポップアップに追加
+            formatted_kilopost = format_kilopost(row.get('中心位置キロ程'))
+            
+            # ポップアップに表示するHTMLコンテンツを作成
+            popup_html = f"""
+                <b>踏切名:</b> {row.get('踏切名', '名称不明')}<br>
+                <b>線名:</b> {row.get('線名', '')}<br>
+                <b>キロ程:</b> {formatted_kilopost}<br>
+                <a href="{gmap_link}" target="_blank" rel="noopener noreferrer">Google Mapで開く</a>
+            """
+            
             tooltip_text = row.get('踏切名', '')
+            
+            # HTMLを正しく表示するためにfolium.Popupを使用
+            popup = folium.Popup(popup_html, max_width=300)
             
             folium.Marker(
                 [row['Lat'], row['Lon']],
-                popup=popup_text,
+                popup=popup,
                 tooltip=tooltip_text
             ).add_to(m)
     
@@ -94,18 +110,15 @@ if not df.empty and not filtered_df.empty:
     st.write(f"表示件数: {len(filtered_df)}件")
 
     # --- 表示用データフレームの準備 ---
-    # 【修正点】 表示したい列のうち、実際にデータフレームに存在する列だけを抽出
     ideal_display_cols = ['線名', '踏切名', '中心位置キロ程']
     display_cols = [col for col in ideal_display_cols if col in filtered_df.columns]
     
     if display_cols:
         display_df = filtered_df[display_cols].copy()
         
-        # '中心位置キロ程'列が存在すればフォーマットを適用
         if '中心位置キロ程' in display_df.columns:
             display_df['中心位置キロ程'] = display_df['中心位置キロ程'].apply(format_kilopost)
         
-        # データフレームを表示
         st.dataframe(display_df)
 
 elif not df.empty:
