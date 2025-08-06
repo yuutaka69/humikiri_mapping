@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import folium
 from folium.plugins import Search
-from streamlit_folium import st_folium # ★★★ エラー修正: 不足していたインポート文を追加 ★★★
+from streamlit_folium import st_folium
 import os
 import json
 
@@ -28,7 +28,6 @@ def format_kilopost(value):
 def load_data(file_path):
     if os.path.exists(file_path):
         try:
-            # CSV読み込み時にエンコーディングを指定
             return pd.read_csv(file_path, encoding='utf-8')
         except Exception as e:
             st.error(f"CSVファイルの読み込み中にエラーが発生しました: {e}")
@@ -38,10 +37,11 @@ def load_data(file_path):
         st.error("リポジトリの 'data' フォルダにCSVファイルが正しく配置されているか確認してください。")
         return pd.DataFrame()
 
-# --- ★★★【大幅修正】多機能フィルター付きHTMLを生成する関数 ★★★ ---
+# --- ★★★【ロジック改善】多機能フィルター付きHTMLを生成する関数 ★★★ ---
 def create_multifilter_map_html(df):
     """
     複数の絞り込みフィルターと検索機能を持つインタラクティブなHTMLを生成する。
+    JavaScriptのロジックを改善し、安定性を向上。
     """
     if df.empty:
         return "<h1>表示するデータがありません。</h1>"
@@ -50,56 +50,36 @@ def create_multifilter_map_html(df):
     df_safe = df.fillna('')
 
     # 地図の中心を計算
-    center_lat = df['Lat'].mean()
-    center_lon = df['Lon'].mean()
+    center_lat = df[df['Lat'].notna()]['Lat'].mean()
+    center_lon = df[df['Lon'].notna()]['Lon'].mean()
     m = folium.Map(location=[center_lat, center_lon], zoom_start=10)
 
     # マーカーを管理するためのFeatureGroupを作成
-    marker_group = folium.FeatureGroup(name="FumikiriMarkers").add_to(m)
+    marker_group = folium.FeatureGroup(name="FumikiriMarkers", control=False).add_to(m)
 
     # --- マーカーとデータをJavaScriptで扱えるように準備 ---
     markers_data = []
     for idx, row in df_safe.iterrows():
         if pd.notna(row['Lat']) and pd.notna(row['Lon']):
-            # マーカーを作成してFeatureGroupに追加
-            popup_html = f"""
-                <b>踏切名:</b> {row.get('踏切名', '名称不明')}<br>
-                <b>線名:</b> {row.get('線名', '')}<br>
-                <b>キロ程:</b> {format_kilopost(row.get('中心位置キロ程'))}<br>
-                <a href="https://www.google.com/maps?q={row['Lat']},{row['Lon']}" target="_blank" rel="noopener noreferrer">Google Mapで開く</a>
-            """
-            marker = folium.Marker(
-                location=[row['Lat'], row['Lon']],
-                popup=folium.Popup(popup_html, max_width=300),
-                tooltip=row.get('踏切名', ''),
-                icon=folium.Icon(color='blue', icon='train', prefix='fa')
-            )
-            marker.add_to(marker_group)
-            
             # JavaScriptで使うためのデータを整形
+            # マーカーの生成はJavaScript側で行うことで効率化
             markers_data.append({
-                'id': marker.get_name(), # foliumがマーカーに割り当てる一意のID
                 'lat': row['Lat'],
                 'lon': row['Lon'],
                 'name': row.get('踏切名', ''),
                 'line': row.get('線名', ''),
                 'shisha': row.get('支社名', ''),
                 'kasho': row.get('箇所名（系統名なし）', ''),
-                'type': row.get('踏切種別', '')
+                'type': row.get('踏切種別', ''),
+                'popup': f"""
+                    <b>踏切名:</b> {row.get('踏切名', '名称不明')}<br>
+                    <b>線名:</b> {row.get('線名', '')}<br>
+                    <b>キロ程:</b> {format_kilopost(row.get('中心位置キロ程'))}<br>
+                    <a href="https://www.google.com/maps?q={row['Lat']},{row['Lon']}" target="_blank" rel="noopener noreferrer">Google Mapで開く</a>
+                """
             })
 
-    # --- SearchプラグインをFeatureGroupに対して設定 ---
-    # これにより、検索対象が地図上のマーカーのみに限定される
-    Search(
-        layer=marker_group,
-        search_label="name", # tooltipのテキストを検索
-        placeholder='踏切名で検索...',
-        collapsed=False,
-        position='topright'
-    ).add_to(m)
-
     # --- HTMLに埋め込むCSSとJavaScriptを定義 ---
-    # データとマーカー情報をJSON形式でJavaScript変数に変換
     js_data = json.dumps(markers_data)
 
     custom_script_css = f"""
@@ -110,32 +90,40 @@ def create_multifilter_map_html(df):
             left: 10px;
             z-index: 1000;
             background-color: white;
-            padding: 10px;
+            padding: 10px 15px;
             border-radius: 5px;
             box-shadow: 0 0 15px rgba(0,0,0,0.2);
-            font-family: Arial, sans-serif;
-            width: 250px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+            width: 260px;
+            max-height: 95vh;
+            overflow-y: auto;
         }}
         #filter-container h4 {{
             margin-top: 0;
-            margin-bottom: 10px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
         }}
         .filter-item {{
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }}
         .filter-item label {{
             display: block;
             margin-bottom: 5px;
             font-weight: bold;
+            font-size: 14px;
         }}
         .filter-item select, .filter-item input {{
             width: 100%;
-            padding: 5px;
-            border-radius: 3px;
+            padding: 8px;
+            border-radius: 4px;
             border: 1px solid #ccc;
+            box-sizing: border-box;
         }}
         #results-count {{
-            margin-top: 10px;
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
             font-weight: bold;
         }}
     </style>
@@ -166,17 +154,33 @@ def create_multifilter_map_html(df):
     </div>
 
     <script>
-    document.addEventListener('DOMContentLoaded', (event) => {{
+    //DOMContentLoadedがfoliumのmap初期化より先に発火するのを防ぐため、少し遅延させる
+    setTimeout(() => {{
         const allMarkersData = {js_data};
-        const map = this.map; // foliumが生成したmapインスタンスを取得
+        const map = this.map;
         
-        // マップ上の全マーカーレイヤーをIDで引けるようにする
-        const markerLayers = {{}};
-        map.eachLayer(function(layer) {{
-            if (layer.options && layer.options.pane === 'markerPane') {{
-                const markerId = layer.getTooltip()._source.get_name();
-                markerLayers[markerId] = layer;
-            }}
+        // マーカーを保持するレイヤーグループを作成
+        const markersLayerGroup = L.featureGroup().addTo(map);
+        const allMarkers = [];
+
+        // 全てのマーカーを事前に作成
+        allMarkersData.forEach(data => {{
+            const marker = L.marker([data.lat, data.lon], {{
+                icon: L.icon({{
+                    iconUrl: 'https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
+                    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+                    iconSize: [25, 41],
+                    iconAnchor: [12, 41],
+                    popupAnchor: [1, -34],
+                    shadowSize: [41, 41]
+                }})
+            }});
+            marker.bindPopup(data.popup);
+            marker.bindTooltip(data.name);
+            
+            // フィルターで使うためのデータをマーカーに添付
+            marker.fumikiriData = data;
+            allMarkers.push(marker);
         }});
 
         // フィルター要素を取得
@@ -187,10 +191,11 @@ def create_multifilter_map_html(df):
         const typeSelect = document.getElementById('type-filter');
         const countDiv = document.getElementById('results-count');
 
-        // ドロップダウンに選択肢を設定する関数
+        // ドロップダウンに選択肢を設定する関数（ロジック改善）
         function populateSelect(selectElement, property) {{
-            const options = ['すべて', ...new Set(allMarkersData.map(d => d[property]).filter(Boolean))].sort();
-            selectElement.innerHTML = options.map(opt => `<option value="${{opt}}">${{opt}}</option>`).join('');
+            // 空白やnullを除外してからユニークなリストを作成
+            const options = [...new Set(allMarkersData.map(d => d[property]).filter(p => p && p.trim() !== ''))].sort();
+            selectElement.innerHTML = '<option value="すべて">すべて</option>' + options.map(opt => `<option value="${{opt}}">${{opt}}</option>`).join('');
         }}
 
         // 各フィルターを初期化
@@ -200,6 +205,8 @@ def create_multifilter_map_html(df):
         populateSelect(typeSelect, 'type');
 
         function applyFilters() {{
+            markersLayerGroup.clearLayers(); // 表示中のマーカーを一旦クリア
+            
             const nameFilter = nameInput.value.toLowerCase();
             const lineFilter = lineSelect.value;
             const shishaFilter = shishaSelect.value;
@@ -208,10 +215,8 @@ def create_multifilter_map_html(df):
             
             let visibleCount = 0;
 
-            allMarkersData.forEach(data => {{
-                const markerLayer = markerLayers[data.id];
-                if (!markerLayer) return;
-
+            allMarkers.forEach(marker => {{
+                const data = marker.fumikiriData;
                 const isVisible = 
                     (nameFilter === '' || data.name.toLowerCase().includes(nameFilter)) &&
                     (lineFilter === 'すべて' || data.line === lineFilter) &&
@@ -220,33 +225,25 @@ def create_multifilter_map_html(df):
                     (typeFilter === 'すべて' || data.type === typeFilter);
 
                 if (isVisible) {{
-                    if (!map.hasLayer(markerLayer)) {{
-                        map.addLayer(markerLayer);
-                    }}
+                    markersLayerGroup.addLayer(marker);
                     visibleCount++;
-                }} else {{
-                    if (map.hasLayer(markerLayer)) {{
-                        map.removeLayer(markerLayer);
-                    }}
                 }}
             }});
             countDiv.textContent = `表示件数: ${{visibleCount}}件`;
         }}
 
         // イベントリスナーを設定
-        nameInput.addEventListener('input', applyFilters);
-        lineSelect.addEventListener('change', applyFilters);
-        shishaSelect.addEventListener('change', applyFilters);
-        kashoSelect.addEventListener('change', applyFilters);
-        typeSelect.addEventListener('change', applyFilters);
+        [nameInput, lineSelect, shishaSelect, kashoSelect, typeSelect].forEach(el => {{
+            el.addEventListener('input', applyFilters);
+            el.addEventListener('change', applyFilters);
+        }});
 
         // 初期表示
         applyFilters();
-    }});
+    }}, 500);
     </script>
     """
     
-    # HTMLにカスタムスクリプトとCSSを追加
     m.get_root().html.add_child(folium.Element(custom_script_css))
     
     return m._repr_html_()
@@ -257,7 +254,6 @@ DATA_PATH = 'data/踏切_緯度経度追加_v5.csv'
 df = load_data(DATA_PATH)
 
 # --- サイドバー (Streamlitアプリ用フィルター) ---
-# ... (この部分は変更なし) ...
 with st.sidebar:
     st.header('検索条件')
     if not df.empty:
@@ -291,7 +287,6 @@ with st.sidebar:
         selected_kilo_range = None
 
 # --- データの絞り込み処理 (Streamlitアプリ用) ---
-# ... (この部分は変更なし) ...
 filtered_df = pd.DataFrame()
 if not df.empty:
     filtered_df = df.copy()
@@ -311,7 +306,6 @@ if not df.empty:
 
 # --- メイン画面 (地図とデータ表示) ---
 if not filtered_df.empty:
-    # Streamlitアプリ上の地図
     center_lat = filtered_df['Lat'].mean()
     center_lon = filtered_df['Lon'].mean()
     m_main = folium.Map(location=[center_lat, center_lon], zoom_start=12)
@@ -325,14 +319,11 @@ if not filtered_df.empty:
     st.markdown("---")
     st.subheader("ダウンロードオプション")
 
-    # Ver1: 静的なHTML
     with st.expander("Ver.1 静的な地図をHTMLとしてダウンロード"):
         map_html_static = m_main._repr_html_()
         st.download_button(label="ダウンロード (Ver.1)", data=map_html_static, file_name="fumikiri_map_static.html", mime="text/html")
     
-    # ★★★【修正】Ver2: 多機能フィルター付きHTML ★★★
     with st.expander("Ver.2 多機能フィルター付き地図をHTMLとしてダウンロード"):
-        # Streamlitでの絞り込み結果を基に、高機能なHTMLを生成
         map_html_multifilter = create_multifilter_map_html(filtered_df)
         st.download_button(
             label="ダウンロード (Ver.2)",
