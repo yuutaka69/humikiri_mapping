@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import folium
@@ -80,7 +79,7 @@ with st.sidebar:
             min_kilo = df['中心位置キロ程'].dropna().min()
             max_kilo = df['中心位置キロ程'].dropna().max()
             
-            if min_kilo < max_kilo:
+            if pd.notna(min_kilo) and pd.notna(max_kilo) and min_kilo < max_kilo:
                 selected_kilo_range = st.slider(
                     '中心位置キロ程で絞り込み',
                     min_value=float(min_kilo),
@@ -114,6 +113,8 @@ if not df.empty:
     if selected_type != 'すべて' and '踏切種別' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['踏切種別'] == selected_type]
     if selected_kilo_range and '中心位置キロ程' in filtered_df.columns:
+        # スライダーで選択された範囲でフィルタリングする前に、NaN値を持つ行を除外
+        filtered_df = filtered_df.dropna(subset=['中心位置キロ程'])
         filtered_df = filtered_df[
             (filtered_df['中心位置キロ程'] >= selected_kilo_range[0]) &
             (filtered_df['中心位置キロ程'] <= selected_kilo_range[1])
@@ -127,7 +128,9 @@ if not df.empty and not filtered_df.empty:
 
     for idx, row in filtered_df.iterrows():
         if pd.notna(row['Lat']) and pd.notna(row['Lon']):
+            # ★★★ 変更点 1: Google Mapのリンクを一般的な形式に修正 ★★★
             gmap_link = f"https://www.google.com/maps?q={row['Lat']},{row['Lon']}"
+            
             formatted_kilopost = format_kilopost(row.get('中心位置キロ程'))
             popup_html = f"""
                 <b>踏切名:</b> {row.get('踏切名', '名称不明')}<br>
@@ -138,11 +141,13 @@ if not df.empty and not filtered_df.empty:
             tooltip_text = row.get('踏切名', '')
             popup = folium.Popup(popup_html, max_width=300)
             
-            # マーカーを直接地図に追加
+            # ★★★ 変更点 2: マーカーにアイコンを明示的に指定 ★★★
             folium.Marker(
                 location=[row['Lat'], row['Lon']],
                 popup=popup,
-                tooltip=tooltip_text
+                tooltip=tooltip_text,
+                # Font Awesomeのアイコンを指定 (例: 'train', 'road', 'map-marker' など)
+                icon=folium.Icon(color='blue', icon='train', prefix='fa') 
             ).add_to(m)
     
     st_folium(m, width='100%', height=500)
@@ -158,7 +163,7 @@ if not df.empty and not filtered_df.empty:
     
     st.write(f"表示件数: {len(filtered_df)}件")
 
-    # --- 【変更点】データ一覧をexpander内に配置 ---
+    # --- データ一覧をexpander内に配置 ---
     with st.expander("絞り込み結果のデータを表示"):
         # 表示用データフレームの準備
         ideal_display_cols = ['支社名', '箇所名（系統名なし）', '線名', '踏切名', '踏切種別', '中心位置キロ程']
