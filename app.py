@@ -39,8 +39,8 @@ def load_data(file_path):
 # --- ★★★【ロジック刷新】多機能フィルター付きHTMLを生成する関数 ★★★ ---
 def create_multifilter_map_html(df):
     """
-    Python/Foliumでマーカーを生成し、JavaScriptで表示制御を行う方式に刷新。
-    安定性とパフォーマンスを向上させる。
+    JavaScriptがデータからマーカー生成とフィルタリングを一貫して行う方式に刷新。
+    これにより安定性と信頼性を大幅に向上させる。
     """
     if df.empty:
         return "<h1>表示するデータがありません。</h1>"
@@ -49,56 +49,41 @@ def create_multifilter_map_html(df):
     center_lat = df[df['Lat'].notna()]['Lat'].mean()
     center_lon = df[df['Lon'].notna()]['Lon'].mean()
     
+    # Python側では空の地図だけを作成
     m = folium.Map(location=[center_lat, center_lon], zoom_start=10)
     
-    # --- マーカーとフィルター用データを準備 ---
+    # --- JavaScriptでマーカーを生成するためのデータを準備 ---
     markers_data = []
-    # FeatureGroupをマーカーのコンテナとして使用
-    marker_group = folium.FeatureGroup(name="FumikiriMarkers").add_to(m)
-
     for idx, row in df_safe.iterrows():
         if pd.notna(row['Lat']) and pd.notna(row['Lon']):
-            marker = folium.Marker(
-                location=[row['Lat'], row['Lon']],
-                popup=f"""
-                    <b>踏切名:</b> {row.get('踏切名', '名称不明')}<br>
-                    <b>線名:</b> {row.get('線名', '')}<br>
-                    <b>キロ程:</b> {format_kilopost(row.get('中心位置キロ程'))}<br>
-                    <a href="https://www.google.com/maps?q={row['Lat']},{row['Lon']}" target="_blank" rel="noopener noreferrer">Google Mapで開く</a>
-                """,
-                tooltip=row.get('踏切名', '')
-            )
-            marker.add_to(marker_group)
-            
-            # JavaScriptでフィルターするために各マーカーの情報を集める
             markers_data.append({
-                'id': marker.get_name(), # Foliumが割り当てる一意のID
+                'lat': row['Lat'],
+                'lon': row['Lon'],
                 'name': row.get('踏切名', ''),
                 'line': row.get('線名', ''),
                 'shisha': row.get('支社名', ''),
                 'kasho': row.get('箇所名（系統名なし）', ''),
-                'type': row.get('踏切種別', '')
+                'type': row.get('踏切種別', ''),
+                'popup': f"""
+                    <b>踏切名:</b> {row.get('踏切名', '名称不明')}<br>
+                    <b>線名:</b> {row.get('線名', '')}<br>
+                    <b>キロ程:</b> {format_kilopost(row.get('中心位置キロ程'))}<br>
+                    <a href="https://www.google.com/maps?q={row['Lat']},{row['Lon']}" target="_blank" rel="noopener noreferrer">Google Mapで開く</a>
+                """
             })
 
     # --- HTMLに埋め込むCSSとJavaScriptを定義 ---
-    js_data = json.dumps(markers_data)
-    map_var_name = m.get_name() # 地図オブジェクトの変数名を取得
+    js_data = json.dumps(markers_data, ensure_ascii=False)
+    map_var_name = m.get_name()
 
     custom_script_css = f"""
     <style>
         #filter-container {{
-            position: fixed;
-            top: 10px;
-            left: 10px;
-            z-index: 1000;
-            background-color: white;
-            padding: 10px 15px;
-            border-radius: 5px;
+            position: fixed; top: 10px; left: 10px; z-index: 1000;
+            background-color: white; padding: 10px 15px; border-radius: 5px;
             box-shadow: 0 0 15px rgba(0,0,0,0.2);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-            width: 260px;
-            max-height: 95vh;
-            overflow-y: auto;
+            width: 260px; max-height: 95vh; overflow-y: auto;
         }}
         #filter-container h4 {{ margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
         .filter-item {{ margin-bottom: 12px; }}
@@ -121,29 +106,17 @@ def create_multifilter_map_html(df):
     function initFumikiriFilters() {{
         const allMarkersData = {js_data};
         const map = window['{map_var_name}'];
-        
-        // 全マーカーレイヤーをIDで引けるようにマップを作成
-        const markerLayers = {{}};
-        map.eachLayer(function(layer) {{
-            if (layer.feature && layer.feature.type === 'Feature' && layer.feature.properties) {{
-                // This logic is for GeoJson, we need to adapt for FeatureGroup
-            }} else if (layer.getTooltip && typeof layer.getTooltip === 'function') {{
-                 // Heuristic to find markers inside the feature group
-                const markerId = layer.getTooltip()._source.get_name();
-                if(markerId) {{
-                    markerLayers[markerId] = layer;
-                }}
-            }}
-        }});
-        
-        // FeatureGroup内のレイヤーを探索するより確実な方法
-        map.eachLayer(function(layer) {{
-            if (layer instanceof L.FeatureGroup) {{
-                layer.eachLayer(function(marker) {{
-                    const markerId = marker.getTooltip()._source.get_name();
-                    markerLayers[markerId] = marker;
-                }});
-            }}
+
+        const markersLayerGroup = L.featureGroup().addTo(map);
+        const allMarkerObjects = [];
+
+        // 1. JSで全マーカーオブジェクトをデータから生成
+        allMarkersData.forEach(data => {{
+            const marker = L.marker([data.lat, data.lon]);
+            marker.bindPopup(data.popup);
+            marker.bindTooltip(data.name);
+            marker.fumikiriData = data; // フィルター用のデータをマーカー自体に添付
+            allMarkerObjects.push(marker);
         }});
 
         const nameInput = document.getElementById('name-filter');
@@ -153,9 +126,10 @@ def create_multifilter_map_html(df):
         const typeSelect = document.getElementById('type-filter');
         const countDiv = document.getElementById('results-count');
 
+        // 2. ドロップダウンの選択肢を生成
         function populateSelect(selectElement, property) {{
-            const options = [...new Set(allMarkersData.map(d => d[property]).filter(p => p && p.trim() !== ''))].sort();
-            selectElement.innerHTML = '<option value="すべて">すべて</option>' + options.map(opt => `<option value="' + opt + '">' + opt + '</option>`).join('');
+            const options = [...new Set(allMarkersData.map(d => d[property]).filter(p => p && String(p).trim() !== ''))].sort();
+            selectElement.innerHTML = '<option value="すべて">すべて</option>' + options.map(opt => `<option value="${{opt.replace(/"/g, '&quot;')}}">${{opt}}</option>`).join('');
         }}
 
         populateSelect(lineSelect, 'line');
@@ -163,7 +137,10 @@ def create_multifilter_map_html(df):
         populateSelect(kashoSelect, 'kasho');
         populateSelect(typeSelect, 'type');
 
+        // 3. フィルター適用ロジック
         function applyFilters() {{
+            markersLayerGroup.clearLayers(); // 表示中のマーカーを一旦全消去
+            
             const nameFilter = nameInput.value.toLowerCase();
             const lineFilter = lineSelect.value;
             const shishaFilter = shishaSelect.value;
@@ -171,10 +148,8 @@ def create_multifilter_map_html(df):
             const typeFilter = typeSelect.value;
             
             let visibleCount = 0;
-            allMarkersData.forEach(data => {{
-                const markerLayer = markerLayers[data.id];
-                if (!markerLayer) return;
-
+            allMarkerObjects.forEach(marker => {{
+                const data = marker.fumikiriData;
                 const isVisible = 
                     (nameFilter === '' || data.name.toLowerCase().includes(nameFilter)) &&
                     (lineFilter === 'すべて' || data.line === lineFilter) &&
@@ -183,10 +158,8 @@ def create_multifilter_map_html(df):
                     (typeFilter === 'すべて' || data.type === typeFilter);
 
                 if (isVisible) {{
-                    if (!map.hasLayer(markerLayer)) map.addLayer(markerLayer);
+                    marker.addTo(markersLayerGroup); // 条件に合うものだけ再表示
                     visibleCount++;
-                }} else {{
-                    if (map.hasLayer(markerLayer)) map.removeLayer(markerLayer);
                 }}
             }});
             countDiv.textContent = `表示件数: ` + visibleCount + `件`;
@@ -196,12 +169,13 @@ def create_multifilter_map_html(df):
             el.addEventListener('input', applyFilters);
             el.addEventListener('change', applyFilters);
         }});
-        applyFilters();
+        
+        applyFilters(); // 初期表示
     }}
 
-    // マップオブジェクトが準備できてから実行するためのポーリング処理
+    // マップオブジェクトが準備できてから実行するための確実な方法
     const checkMapReady = setInterval(function() {{
-        if (window['{map_var_name}']) {{
+        if (window['{map_var_name}'] && window.L) {{
             clearInterval(checkMapReady);
             initFumikiriFilters();
         }}
