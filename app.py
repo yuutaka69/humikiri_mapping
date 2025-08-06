@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 import folium
-from folium.plugins import MarkerCluster, Search
+from folium.plugins import Geocoder # ★★★ Searchの代わりにGeocoderをインポート ★★★
 from streamlit_folium import st_folium
 import os
+import json
 
 # --- アプリの基本設定 ---
 st.set_page_config(layout="wide")
@@ -13,7 +14,7 @@ st.title('踏切検索マップ 🗺️')
 def format_kilopost(value):
     """数値を 'XXkXXX.Xm' 形式の文字列に変換する"""
     if pd.isna(value):
-        return ""  # 空白の場合は何も返さない
+        return ""
     try:
         value = float(value)
         kilo = int(value / 1000)
@@ -36,10 +37,11 @@ def load_data(file_path):
         st.error("リポジトリの 'data' フォルダにCSVファイルが正しく配置されているか確認してください。")
         return pd.DataFrame()
 
-# --- ★★★【新規追加】検索機能付きHTMLを生成する関数 ★★★ ---
+# --- ★★★【修正】オートコンプリート検索機能付きHTMLを生成する関数 ★★★ ---
 def create_searchable_map_html(df):
     """
-    検索プラグインとマーカークラスターを含むFoliumマップのHTMLを生成する。
+    Geocoderプラグイン（オートコンプリート検索）を含むFoliumマップのHTMLを生成する。
+    クラスタリングは行わない。
     """
     if df.empty:
         return "<h1>データがありません。</h1>"
@@ -49,46 +51,54 @@ def create_searchable_map_html(df):
     center_lon = df['Lon'].mean()
     m = folium.Map(location=[center_lat, center_lon], zoom_start=10)
 
-    # マーカークラスターを作成して地図に追加
-    # 大量のマーカーをすっきりと表示できる
-    marker_cluster = MarkerCluster().add_to(m)
-
-    # データフレームをループしてマーカーをクラスターに追加
+    # --- GeoJSONデータを作成 ---
+    # GeocoderプラグインはGeoJSON形式のデータを必要とする
+    features = []
     for idx, row in df.iterrows():
         if pd.notna(row['Lat']) and pd.notna(row['Lon']):
-            gmap_link = f"https://www.google.com/maps?q={row['Lat']},{row['Lon']}"
-            formatted_kilopost = format_kilopost(row.get('中心位置キロ程'))
-            popup_html = f"""
-                <b>踏切名:</b> {row.get('踏切名', '名称不明')}<br>
-                <b>線名:</b> {row.get('線名', '')}<br>
-                <b>キロ程:</b> {formatted_kilopost}<br>
-                <a href="{gmap_link}" target="_blank" rel="noopener noreferrer">Google Mapで開く</a>
-            """
-            popup = folium.Popup(popup_html, max_width=300)
+            # 検索で表示されるラベル（踏切名）
+            label = row.get('踏切名', '名称不明')
             
-            # 検索プラグインはtooltipの値を検索対象にする
-            tooltip_text = row.get('踏切名', '名称不明')
-            
-            folium.Marker(
-                location=[row['Lat'], row['Lon']],
-                popup=popup,
-                tooltip=tooltip_text,
-                icon=folium.Icon(color='blue', icon='train', prefix='fa')
-            ).add_to(marker_cluster) # マーカーを直接地図ではなく、クラスターに追加
+            # GeoJSONのFeatureオブジェクトを作成
+            feature = {
+                'type': 'Feature',
+                'geometry': {
+                    'type': 'Point',
+                    'coordinates': [row['Lon'], row['Lat']]
+                },
+                'properties': {
+                    'label': label, # 検索用のラベル
+                    'popup': f"""
+                        <b>踏切名:</b> {row.get('踏切名', '名称不明')}<br>
+                        <b>線名:</b> {row.get('線名', '')}<br>
+                        <b>キロ程:</b> {format_kilopost(row.get('中心位置キロ程'))}<br>
+                        <a href="https://www.google.com/maps?q={row['Lat']},{row['Lon']}" target="_blank" rel="noopener noreferrer">Google Mapで開く</a>
+                    """
+                }
+            }
+            features.append(feature)
+    
+    # GeoJSONレイヤーを作成し、地図に追加
+    geojson_layer = folium.GeoJson(
+        {'type': 'FeatureCollection', 'features': features},
+        # マーカーのポップアップを設定
+        popup=folium.GeoJsonPopup(fields=['popup']),
+        # マーカーのツールチップ（ホバーテキスト）を設定
+        tooltip=folium.GeoJsonTooltip(fields=['label']),
+        # マーカーのスタイルを定義
+        marker=folium.Marker(icon=folium.Icon(color='blue', icon='train', prefix='fa'))
+    ).add_to(m)
 
-    # 検索プラグインを追加
-    # layer: 検索対象のレイヤー (ここではmarker_cluster)
-    # search_label: 検索対象のプロパティ名 (MarkerClusterの場合はtooltipが使われるため'title'を指定)
-    # placeholder: 検索ボックスのプレースホルダーテキスト
-    search = Search(
-        layer=marker_cluster,
-        search_label="title", # Markerのtooltipは内部的にtitleとして扱われる
+
+    # ★★★ Geocoder（オートコンプリート検索）プラグインを追加 ★★★
+    Geocoder(
+        layer=geojson_layer,
+        search_label='label', # 検索対象のプロパティ
         placeholder='踏切名で検索...',
-        collapsed=False, # 最初から検索ボックスを開いておく
+        collapsed=False,
         position='topright'
     ).add_to(m)
 
-    # HTMLとして表現された地図オブジェクトを返す
     return m._repr_html_()
 
 
@@ -157,31 +167,28 @@ if not df.empty:
 
 # --- メイン画面 (地図とデータ表示) ---
 if not filtered_df.empty:
+    # Streamlitアプリ上の地図（こちらは変更なし）
     center_lat = filtered_df['Lat'].mean()
     center_lon = filtered_df['Lon'].mean()
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
+    m_main = folium.Map(location=[center_lat, center_lon], zoom_start=12)
 
     for idx, row in filtered_df.iterrows():
         if pd.notna(row['Lat']) and pd.notna(row['Lon']):
-            gmap_link = f"https://www.google.com/maps?q={row['Lat']},{row['Lon']}"
-            formatted_kilopost = format_kilopost(row.get('中心位置キロ程'))
+            # ... (マーカー追加処理は変更なし) ...
             popup_html = f"""
                 <b>踏切名:</b> {row.get('踏切名', '名称不明')}<br>
                 <b>線名:</b> {row.get('線名', '')}<br>
-                <b>キロ程:</b> {formatted_kilopost}<br>
-                <a href="{gmap_link}" target="_blank" rel="noopener noreferrer">Google Mapで開く</a>
+                <b>キロ程:</b> {format_kilopost(row.get('中心位置キロ程'))}<br>
+                <a href="https://www.google.com/maps?q={row['Lat']},{row['Lon']}" target="_blank" rel="noopener noreferrer">Google Mapで開く</a>
             """
-            popup = folium.Popup(popup_html, max_width=300)
-            tooltip_text = row.get('踏切名', '')
-            
             folium.Marker(
                 location=[row['Lat'], row['Lon']],
-                popup=popup,
-                tooltip=tooltip_text,
+                popup=folium.Popup(popup_html, max_width=300),
+                tooltip=row.get('踏切名', ''),
                 icon=folium.Icon(color='blue', icon='train', prefix='fa')
-            ).add_to(m)
+            ).add_to(m_main)
     
-    st_folium(m, width='100%', height=500)
+    st_folium(m_main, width='100%', height=500)
 
     # --- ダウンロードセクション ---
     st.markdown("---")
@@ -189,7 +196,7 @@ if not filtered_df.empty:
 
     # Ver1: 静的なHTML
     with st.expander("Ver.1 静的な地図をHTMLとしてダウンロード"):
-        map_html_static = m._repr_html_()
+        map_html_static = m_main._repr_html_()
         st.download_button(
             label="ダウンロード (Ver.1)",
             data=map_html_static,
@@ -197,16 +204,15 @@ if not filtered_df.empty:
             mime="text/html",
         )
     
-    # ★★★【新規追加】Ver2: 検索機能付きHTML ★★★
-    with st.expander("Ver.2 検索機能付きの地図をHTMLとしてダウンロード"):
-        # 現在絞り込まれているデータで検索機能付きHTMLを生成
+    # ★★★【修正】Ver2: オートコンプリート検索機能付きHTML ★★★
+    with st.expander("Ver.2 オートコンプリート検索付き地図をHTMLとしてダウンロード"):
         map_html_searchable = create_searchable_map_html(filtered_df)
         st.download_button(
             label="ダウンロード (Ver.2)",
             data=map_html_searchable,
             file_name="fumikiri_map_searchable.html",
             mime="text/html",
-            help="現在絞り込まれている全ての踏切データを含んだ、検索機能付きのHTMLファイルをダウンロードします。"
+            help="現在絞り込まれている全ての踏切データを含んだ、オートコンプリート検索機能付きのHTMLファイルをダウンロードします。"
         )
 
     st.markdown("---")
@@ -226,5 +232,4 @@ if not filtered_df.empty:
 elif not df.empty:
     st.warning('指定された条件に一致する踏切はありませんでした。')
 else:
-    # データフレームが最初から空の場合のメッセージ
     st.info("サイドバーで検索条件を指定してください。")
