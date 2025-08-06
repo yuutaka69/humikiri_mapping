@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import folium
 from folium.plugins import Search
+from streamlit_folium import st_folium # ★★★ エラー修正: 不足していたインポート文を追加 ★★★
 import os
 import json
 
