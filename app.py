@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import folium
-from folium.plugins import Search
 from streamlit_folium import st_folium
 import os
 import json
@@ -37,50 +36,53 @@ def load_data(file_path):
         st.error("リポジトリの 'data' フォルダにCSVファイルが正しく配置されているか確認してください。")
         return pd.DataFrame()
 
-# --- ★★★【ロジック改善】多機能フィルター付きHTMLを生成する関数 ★★★ ---
+# --- ★★★【ロジック刷新】多機能フィルター付きHTMLを生成する関数 ★★★ ---
 def create_multifilter_map_html(df):
     """
-    複数の絞り込みフィルターと検索機能を持つインタラクティブなHTMLを生成する。
-    JavaScriptのロジックを改善し、安定性を向上。
+    Python/Foliumでマーカーを生成し、JavaScriptで表示制御を行う方式に刷新。
+    安定性とパフォーマンスを向上させる。
     """
     if df.empty:
         return "<h1>表示するデータがありません。</h1>"
 
-    # NaN値を安全な値（空文字）に置換
     df_safe = df.fillna('')
-
-    # 地図の中心を計算
     center_lat = df[df['Lat'].notna()]['Lat'].mean()
     center_lon = df[df['Lon'].notna()]['Lon'].mean()
+    
     m = folium.Map(location=[center_lat, center_lon], zoom_start=10)
-
-    # マーカーを管理するためのFeatureGroupを作成
-    marker_group = folium.FeatureGroup(name="FumikiriMarkers", control=False).add_to(m)
-
-    # --- マーカーとデータをJavaScriptで扱えるように準備 ---
+    
+    # --- マーカーとフィルター用データを準備 ---
     markers_data = []
+    # FeatureGroupをマーカーのコンテナとして使用
+    marker_group = folium.FeatureGroup(name="FumikiriMarkers").add_to(m)
+
     for idx, row in df_safe.iterrows():
         if pd.notna(row['Lat']) and pd.notna(row['Lon']):
-            # JavaScriptで使うためのデータを整形
-            # マーカーの生成はJavaScript側で行うことで効率化
-            markers_data.append({
-                'lat': row['Lat'],
-                'lon': row['Lon'],
-                'name': row.get('踏切名', ''),
-                'line': row.get('線名', ''),
-                'shisha': row.get('支社名', ''),
-                'kasho': row.get('箇所名（系統名なし）', ''),
-                'type': row.get('踏切種別', ''),
-                'popup': f"""
+            marker = folium.Marker(
+                location=[row['Lat'], row['Lon']],
+                popup=f"""
                     <b>踏切名:</b> {row.get('踏切名', '名称不明')}<br>
                     <b>線名:</b> {row.get('線名', '')}<br>
                     <b>キロ程:</b> {format_kilopost(row.get('中心位置キロ程'))}<br>
                     <a href="https://www.google.com/maps?q={row['Lat']},{row['Lon']}" target="_blank" rel="noopener noreferrer">Google Mapで開く</a>
-                """
+                """,
+                tooltip=row.get('踏切名', '')
+            )
+            marker.add_to(marker_group)
+            
+            # JavaScriptでフィルターするために各マーカーの情報を集める
+            markers_data.append({
+                'id': marker.get_name(), # Foliumが割り当てる一意のID
+                'name': row.get('踏切名', ''),
+                'line': row.get('線名', ''),
+                'shisha': row.get('支社名', ''),
+                'kasho': row.get('箇所名（系統名なし）', ''),
+                'type': row.get('踏切種別', '')
             })
 
     # --- HTMLに埋め込むCSSとJavaScriptを定義 ---
     js_data = json.dumps(markers_data)
+    map_var_name = m.get_name() # 地図オブジェクトの変数名を取得
 
     custom_script_css = f"""
     <style>
@@ -98,92 +100,52 @@ def create_multifilter_map_html(df):
             max-height: 95vh;
             overflow-y: auto;
         }}
-        #filter-container h4 {{
-            margin-top: 0;
-            margin-bottom: 15px;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 10px;
-        }}
-        .filter-item {{
-            margin-bottom: 12px;
-        }}
-        .filter-item label {{
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-            font-size: 14px;
-        }}
-        .filter-item select, .filter-item input {{
-            width: 100%;
-            padding: 8px;
-            border-radius: 4px;
-            border: 1px solid #ccc;
-            box-sizing: border-box;
-        }}
-        #results-count {{
-            margin-top: 15px;
-            padding-top: 10px;
-            border-top: 1px solid #eee;
-            font-weight: bold;
-        }}
+        #filter-container h4 {{ margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
+        .filter-item {{ margin-bottom: 12px; }}
+        .filter-item label {{ display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px; }}
+        .filter-item select, .filter-item input {{ width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ccc; box-sizing: border-box; }}
+        #results-count {{ margin-top: 15px; padding-top: 10px; border-top: 1px solid #eee; font-weight: bold; }}
     </style>
 
     <div id="filter-container">
         <h4>絞り込み検索</h4>
-        <div class="filter-item">
-            <label for="name-filter">踏切名</label>
-            <input type="text" id="name-filter" placeholder="部分一致検索">
-        </div>
-        <div class="filter-item">
-            <label for="line-filter">路線名</label>
-            <select id="line-filter"></select>
-        </div>
-        <div class="filter-item">
-            <label for="shisha-filter">支社名</label>
-            <select id="shisha-filter"></select>
-        </div>
-        <div class="filter-item">
-            <label for="kasho-filter">箇所名</label>
-            <select id="kasho-filter"></select>
-        </div>
-        <div class="filter-item">
-            <label for="type-filter">踏切種別</label>
-            <select id="type-filter"></select>
-        </div>
+        <div class="filter-item"><label for="name-filter">踏切名</label><input type="text" id="name-filter" placeholder="部分一致検索"></div>
+        <div class="filter-item"><label for="line-filter">路線名</label><select id="line-filter"></select></div>
+        <div class="filter-item"><label for="shisha-filter">支社名</label><select id="shisha-filter"></select></div>
+        <div class="filter-item"><label for="kasho-filter">箇所名</label><select id="kasho-filter"></select></div>
+        <div class="filter-item"><label for="type-filter">踏切種別</label><select id="type-filter"></select></div>
         <div id="results-count"></div>
     </div>
 
     <script>
-    //DOMContentLoadedがfoliumのmap初期化より先に発火するのを防ぐため、少し遅延させる
-    setTimeout(() => {{
+    function initFumikiriFilters() {{
         const allMarkersData = {js_data};
-        const map = this.map;
+        const map = window['{map_var_name}'];
         
-        // マーカーを保持するレイヤーグループを作成
-        const markersLayerGroup = L.featureGroup().addTo(map);
-        const allMarkers = [];
-
-        // 全てのマーカーを事前に作成
-        allMarkersData.forEach(data => {{
-            const marker = L.marker([data.lat, data.lon], {{
-                icon: L.icon({{
-                    iconUrl: 'https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
-                    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-                    iconSize: [25, 41],
-                    iconAnchor: [12, 41],
-                    popupAnchor: [1, -34],
-                    shadowSize: [41, 41]
-                }})
-            }});
-            marker.bindPopup(data.popup);
-            marker.bindTooltip(data.name);
-            
-            // フィルターで使うためのデータをマーカーに添付
-            marker.fumikiriData = data;
-            allMarkers.push(marker);
+        // 全マーカーレイヤーをIDで引けるようにマップを作成
+        const markerLayers = {{}};
+        map.eachLayer(function(layer) {{
+            if (layer.feature && layer.feature.type === 'Feature' && layer.feature.properties) {{
+                // This logic is for GeoJson, we need to adapt for FeatureGroup
+            }} else if (layer.getTooltip && typeof layer.getTooltip === 'function') {{
+                 // Heuristic to find markers inside the feature group
+                const markerId = layer.getTooltip()._source.get_name();
+                if(markerId) {{
+                    markerLayers[markerId] = layer;
+                }}
+            }}
+        }});
+        
+        // FeatureGroup内のレイヤーを探索するより確実な方法
+        map.eachLayer(function(layer) {{
+            if (layer instanceof L.FeatureGroup) {{
+                layer.eachLayer(function(marker) {{
+                    const markerId = marker.getTooltip()._source.get_name();
+                    markerLayers[markerId] = marker;
+                }});
+            }}
         }});
 
-        // フィルター要素を取得
         const nameInput = document.getElementById('name-filter');
         const lineSelect = document.getElementById('line-filter');
         const shishaSelect = document.getElementById('shisha-filter');
@@ -191,22 +153,17 @@ def create_multifilter_map_html(df):
         const typeSelect = document.getElementById('type-filter');
         const countDiv = document.getElementById('results-count');
 
-        // ドロップダウンに選択肢を設定する関数（ロジック改善）
         function populateSelect(selectElement, property) {{
-            // 空白やnullを除外してからユニークなリストを作成
             const options = [...new Set(allMarkersData.map(d => d[property]).filter(p => p && p.trim() !== ''))].sort();
-            selectElement.innerHTML = '<option value="すべて">すべて</option>' + options.map(opt => `<option value="${{opt}}">${{opt}}</option>`).join('');
+            selectElement.innerHTML = '<option value="すべて">すべて</option>' + options.map(opt => `<option value="' + opt + '">' + opt + '</option>`).join('');
         }}
 
-        // 各フィルターを初期化
         populateSelect(lineSelect, 'line');
         populateSelect(shishaSelect, 'shisha');
         populateSelect(kashoSelect, 'kasho');
         populateSelect(typeSelect, 'type');
 
         function applyFilters() {{
-            markersLayerGroup.clearLayers(); // 表示中のマーカーを一旦クリア
-            
             const nameFilter = nameInput.value.toLowerCase();
             const lineFilter = lineSelect.value;
             const shishaFilter = shishaSelect.value;
@@ -214,9 +171,10 @@ def create_multifilter_map_html(df):
             const typeFilter = typeSelect.value;
             
             let visibleCount = 0;
+            allMarkersData.forEach(data => {{
+                const markerLayer = markerLayers[data.id];
+                if (!markerLayer) return;
 
-            allMarkers.forEach(marker => {{
-                const data = marker.fumikiriData;
                 const isVisible = 
                     (nameFilter === '' || data.name.toLowerCase().includes(nameFilter)) &&
                     (lineFilter === 'すべて' || data.line === lineFilter) &&
@@ -225,27 +183,32 @@ def create_multifilter_map_html(df):
                     (typeFilter === 'すべて' || data.type === typeFilter);
 
                 if (isVisible) {{
-                    markersLayerGroup.addLayer(marker);
+                    if (!map.hasLayer(markerLayer)) map.addLayer(markerLayer);
                     visibleCount++;
+                }} else {{
+                    if (map.hasLayer(markerLayer)) map.removeLayer(markerLayer);
                 }}
             }});
-            countDiv.textContent = `表示件数: ${{visibleCount}}件`;
+            countDiv.textContent = `表示件数: ` + visibleCount + `件`;
         }}
 
-        // イベントリスナーを設定
         [nameInput, lineSelect, shishaSelect, kashoSelect, typeSelect].forEach(el => {{
             el.addEventListener('input', applyFilters);
             el.addEventListener('change', applyFilters);
         }});
-
-        // 初期表示
         applyFilters();
-    }}, 500);
+    }}
+
+    // マップオブジェクトが準備できてから実行するためのポーリング処理
+    const checkMapReady = setInterval(function() {{
+        if (window['{map_var_name}']) {{
+            clearInterval(checkMapReady);
+            initFumikiriFilters();
+        }}
+    }}, 100);
     </script>
     """
-    
     m.get_root().html.add_child(folium.Element(custom_script_css))
-    
     return m._repr_html_()
 
 
@@ -258,23 +221,17 @@ with st.sidebar:
     st.header('検索条件')
     if not df.empty:
         search_name = st.text_input('踏切名で検索 (部分一致)')
-        
         unique_lines = ['すべて'] + sorted(df['線名'].dropna().astype(str).unique().tolist())
         selected_line = st.selectbox('路線名で絞り込み', unique_lines)
-
         unique_shisha = ['すべて'] + sorted(df['支社名'].dropna().astype(str).unique().tolist())
         selected_shisha = st.selectbox('支社名で絞り込み', unique_shisha)
-        
         unique_kasho = ['すべて'] + sorted(df['箇所名（系統名なし）'].dropna().astype(str).unique().tolist())
         selected_kasho = st.selectbox('箇所名で絞り込み', unique_kasho)
-        
         unique_type = ['すべて'] + sorted(df['踏切種別'].dropna().astype(str).unique().tolist())
         selected_type = st.selectbox('踏切種別で絞り込み', unique_type)
-        
         if '中心位置キロ程' in df.columns:
             min_kilo = df['中心位置キロ程'].dropna().min()
             max_kilo = df['中心位置キロ程'].dropna().max()
-            
             if pd.notna(min_kilo) and pd.notna(max_kilo) and min_kilo < max_kilo:
                 selected_kilo_range = st.slider('中心位置キロ程で絞り込み', min_value=float(min_kilo), max_value=float(max_kilo), value=(float(min_kilo), float(max_kilo)))
             else:
@@ -318,11 +275,9 @@ if not filtered_df.empty:
     # --- ダウンロードセクション ---
     st.markdown("---")
     st.subheader("ダウンロードオプション")
-
     with st.expander("Ver.1 静的な地図をHTMLとしてダウンロード"):
         map_html_static = m_main._repr_html_()
         st.download_button(label="ダウンロード (Ver.1)", data=map_html_static, file_name="fumikiri_map_static.html", mime="text/html")
-    
     with st.expander("Ver.2 多機能フィルター付き地図をHTMLとしてダウンロード"):
         map_html_multifilter = create_multifilter_map_html(filtered_df)
         st.download_button(
@@ -332,11 +287,8 @@ if not filtered_df.empty:
             mime="text/html",
             help="現在絞り込まれている全ての踏切データと、多角的な検索・絞り込み機能を含んだHTMLファイルをダウンロードします。"
         )
-
     st.markdown("---")
-    
     st.write(f"表示件数: {len(filtered_df)}件")
-
     with st.expander("絞り込み結果のデータを表示"):
         ideal_display_cols = ['支社名', '箇所名（系統名なし）', '線名', '踏切名', '踏切種別', '中心位置キロ程']
         display_cols = [col for col in ideal_display_cols if col in df.columns]
@@ -345,7 +297,6 @@ if not filtered_df.empty:
             if '中心位置キロ程' in display_df.columns:
                 display_df['中心位置キロ程'] = display_df['中心位置キロ程'].apply(format_kilopost)
             st.dataframe(display_df, use_container_width=True)
-
 elif not df.empty:
     st.warning('指定された条件に一致する踏切はありませんでした。')
 else:
