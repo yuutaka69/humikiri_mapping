@@ -147,7 +147,7 @@ if not df.empty and not filtered_df.empty:
                 popup=popup,
                 tooltip=tooltip_text,
                 # Font Awesomeのアイコンを指定 (例: 'train', 'road', 'map-marker' など)
-                icon=folium.Icon(color='blue', icon='train', prefix='fa') 
+                icon=folium.Icon(color='blue', icon='map-marker', prefix='fa') 
             ).add_to(m)
     
     st_folium(m, width='100%', height=500)
